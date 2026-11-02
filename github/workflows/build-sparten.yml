@@ -1,0 +1,335 @@
+name: Build Sparten AI APK
+on:
+  push:
+    paths:
+      - ".github/workflows/build-sparten.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK platform
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Create the Sparten AI Android project
+        shell: bash
+        run: |
+          set -e
+          mkdir -p generated/sparten && cd generated/sparten
+          mkdir -p app/src/main/res/values app/src/main/java/com/spartan/assistant
+          cat > build.gradle <<'EOF_1'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF_1
+          cat > settings.gradle <<'EOF_2'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = 'SpartenAI'
+          include ':app'
+          EOF_2
+          cat > gradle.properties <<'EOF_3'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF_3
+          cat > app/build.gradle <<'EOF_4'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.spartan.assistant'
+              compileSdk 35
+              buildToolsVersion '35.0.0'
+              defaultConfig {
+                  applicationId 'com.spartan.assistant'
+                  minSdk 24
+                  targetSdk 28
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF_4
+          cat > app/src/main/AndroidManifest.xml <<'EOF_5'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <queries>
+                  <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
+                  <intent><action android:name="android.speech.RecognitionService"/></intent>
+              </queries>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+              <application android:allowBackup="false" android:label="Sparten AI" android:theme="@style/AppTheme" android:supportsRtl="true">
+                  <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_5
+          cat > app/src/main/res/values/styles.xml <<'EOF_6'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#6750A4</item>
+                  <item name="android:statusBarColor">#FFFFFF</item>
+                  <item name="android:navigationBarColor">#F1EFFF</item>
+                  <item name="android:windowLightStatusBar">true</item>
+                  <item name="android:windowBackground">#FFFFFF</item>
+              </style>
+          </resources>
+          EOF_6
+          cat > app/src/main/java/com/spartan/assistant/MainActivity.java <<'EOF_7'
+          package com.spartan.assistant;
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.ActivityNotFoundException;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.speech.RecognizerIntent;
+          import android.speech.SpeechRecognizer;
+          import android.speech.tts.TextToSpeech;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.Drawable;
+          import android.graphics.drawable.GradientDrawable;
+          import android.graphics.drawable.LayerDrawable;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.inputmethod.EditorInfo;
+          import android.widget.Button;
+          import android.widget.FrameLayout;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.Spinner;
+          import android.widget.ArrayAdapter;
+          import android.content.pm.ResolveInfo;
+          import android.widget.TextView;
+          import java.net.URLEncoder;
+          import java.util.ArrayList;
+          import java.util.Locale;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.List;
+          public class MainActivity extends Activity implements TextToSpeech.OnInitListener {
+              private static final int VOICE = 41, MIC = 42;
+              private LinearLayout chatList;
+              private EditText input;
+              private ScrollView scroll;
+              private TextToSpeech tts;
+              private boolean ttsReady;
+              private Spinner languagePicker;
+              private final ArrayList<Locale> speechLanguages = new ArrayList<>();
+              private Locale selectedLanguage = Locale.getDefault();
+              @Override public void onCreate(Bundle saved) {
+                  super.onCreate(saved);
+                  getWindow().setStatusBarColor(0xffffffff);
+                  getWindow().setNavigationBarColor(0xfff1efff);
+                  int ui=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; if(android.os.Build.VERSION.SDK_INT>=26)ui|=View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR; getWindow().getDecorView().setSystemUiVisibility(ui);
+                  buildUi();
+                  tts = new TextToSpeech(this, this);
+                  line("Sparten AI", "Hi! Main Sparten AI hoon. Type ya mic se command dein. Main installed apps khol sakta hoon, web search aur timer chala sakta hoon, aur calls/messages tayyar kar sakta hoon.");
+              }
+              private void buildUi() {
+                  FrameLayout page = new FrameLayout(this);
+                  page.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xffffffff, 0xfff1efff}));
+                  addBlob(page, 0x99A78BFA, 340, Gravity.TOP | Gravity.START, -110, -90, 0, 0);
+                  addBlob(page, 0x8843C6FF, 320, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, -150, 0);
+                  addBlob(page, 0x77FF8FC8, 340, Gravity.BOTTOM | Gravity.START, -120, 0, 0, -120);
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(dp(16), dp(14), dp(16), dp(10));
+                  // Header: 3D orb + title
+                  LinearLayout header = new LinearLayout(this);
+                  header.setOrientation(LinearLayout.HORIZONTAL);
+                  header.setGravity(Gravity.CENTER_VERTICAL);
+                  header.setPadding(dp(4), dp(6), dp(4), dp(14));
+                  View orb = new View(this);
+                  GradientDrawable og = new GradientDrawable();
+                  og.setShape(GradientDrawable.OVAL);
+                  og.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+                  og.setGradientCenter(0.32f, 0.28f);
+                  og.setGradientRadius(dp(40));
+                  og.setColors(new int[]{0xffffffff, 0xffc3b5ff, 0xff6c4de6, 0xff3b2a9e});
+                  orb.setBackground(og);
+                  orb.setElevation(dp(10));
+                  if (android.os.Build.VERSION.SDK_INT >= 28) {
+                      orb.setOutlineAmbientShadowColor(0xff6c4de6);
+                      orb.setOutlineSpotShadowColor(0xff6c4de6);
+                  }
+                  header.addView(orb, new LinearLayout.LayoutParams(dp(52), dp(52)));
+                  LinearLayout titles = new LinearLayout(this);
+                  titles.setOrientation(LinearLayout.VERTICAL);
+                  titles.setPadding(dp(14), 0, 0, 0);
+                  TextView title = new TextView(this);
+                  title.setText("Sparten AI");
+                  title.setTextSize(26);
+                  title.setTextColor(0xff1d1836);
+                  title.setTypeface(null, Typeface.BOLD);
+                  TextView sub = new TextView(this);
+                  sub.setText("Voice & text assistant  ·  offline");
+                  sub.setTextSize(13);
+                  sub.setTextColor(0xff6f6a85);
+                  titles.addView(title);
+                  titles.addView(sub);
+                  header.addView(titles);
+                  root.addView(header);
+                  // Language glass card
+                  LinearLayout langCard = new LinearLayout(this);
+                  langCard.setOrientation(LinearLayout.VERTICAL);
+                  langCard.setPadding(dp(16), dp(10), dp(16), dp(2));
+                  langCard.setBackground(glass(22, 0xE6FFFFFF, 0x99FFFFFF, 0x66B4A9FF));
+                  langCard.setElevation(dp(6));
+                  TextView languageLabel = new TextView(this);
+                  languageLabel.setText("Voice language / آواز کی زبان");
+                  languageLabel.setTextSize(12);
+                  languageLabel.setTextColor(0xff6f6a85);
+                  langCard.addView(languageLabel);
+                  languagePicker = new Spinner(this);
+                  langCard.addView(languagePicker, new LinearLayout.LayoutParams(-1, -2));
+                  LinearLayout.LayoutParams langLp = new LinearLayout.LayoutParams(-1, -2);
+                  langLp.setMargins(dp(2), 0, dp(2), dp(12));
+                  root.addView(langCard, langLp);
+                  // Chat glass card
+                  scroll = new ScrollView(this);
+                  scroll.setBackground(glass(26, 0xD9FFFFFF, 0x80FFFFFF, 0x66B4A9FF));
+                  scroll.setElevation(dp(8));
+                  scroll.setClipToOutline(true);
+                  chatList = new LinearLayout(this);
+                  chatList.setOrientation(LinearLayout.VERTICAL);
+                  chatList.setPadding(dp(10), dp(12), dp(10), dp(8));
+                  scroll.addView(chatList, new ScrollView.LayoutParams(-1, -2));
+                  LinearLayout.LayoutParams chatLp = new LinearLayout.LayoutParams(-1, 0, 1);
+                  chatLp.setMargins(dp(2), 0, dp(2), dp(12));
+                  root.addView(scroll, chatLp);
+                  // Input glass pill
+                  input = new EditText(this);
+                  input.setSingleLine(true);
+                  input.setHint("Type a command / apna command likhein");
+                  input.setHintTextColor(0xff8a86a0);
+                  input.setTextColor(0xff22202a);
+                  input.setTextSize(16);
+                  input.setPadding(dp(18), dp(12), dp(18), dp(12));
+                  input.setBackground(glass(28, 0xF2FFFFFF, 0xCCFFFFFF, 0x66B4A9FF));
+                  input.setElevation(dp(5));
+                  input.setImeOptions(EditorInfo.IME_ACTION_SEND);
+                  LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(-1, -2);
+                  inLp.setMargins(dp(2), 0, dp(2), dp(12));
+                  root.addView(input, inLp);
+                  // Buttons: glossy 3D Speak + glass Send
+                  LinearLayout buttons = new LinearLayout(this);
+                  buttons.setOrientation(LinearLayout.HORIZONTAL);
+                  Button mic = new Button(this);
+                  mic.setText("🎙  Speak");
+                  mic.setAllCaps(false);
+                  mic.setTextSize(17);
+                  mic.setTypeface(null, Typeface.BOLD);
+                  mic.setTextColor(0xffffffff);
+                  mic.setBackground(glossy(28, 0xff9b87ff, 0xff5a3fe0, 54));
+                  mic.setStateListAnimator(null);
+                  mic.setElevation(dp(9));
+                  Button send = new Button(this);
+                  send.setText("Send");
+                  send.setAllCaps(false);
+                  send.setTextSize(17);
+                  send.setTypeface(null, Typeface.BOLD);
+                  send.setTextColor(0xff4b34c9);
+                  send.setBackground(glass(28, 0xF2FFFFFF, 0xB3F3F0FF, 0x88B4A9FF));
+                  send.setStateListAnimator(null);
+                  send.setElevation(dp(6));
+                  LinearLayout.LayoutParams micLp = new LinearLayout.LayoutParams(0, dp(54), 1.3f);
+                  micLp.setMargins(dp(2), 0, dp(6), 0);
+                  LinearLayout.LayoutParams sendLp = new LinearLayout.LayoutParams(0, dp(54), 1f);
+                  sendLp.setMargins(dp(6), 0, dp(2), 0);
+                  buttons.addView(mic, micLp);
+                  buttons.addView(send, sendLp);
+                  root.addView(buttons);
+                  TextView note = new TextView(this);
+                  note.setText("Choose any voice language supported by your phone. Calls need your confirmation.");
+                  note.setTextSize(12);
+                  note.setTextColor(0xff7d7893);
+                  note.setGravity(Gravity.CENTER);
+                  note.setPadding(dp(4), dp(10), dp(4), 0);
+                  root.addView(note);
+                  page.addView(root, new FrameLayout.LayoutParams(-1, -1));
+                  setContentView(page);
+                  pressable(mic);
+                  pressable(send);
+                  send.setOnClickListener(v -> submit());
+                  mic.setOnClickListener(v -> startVoice());
+                  input.setOnEditorActionListener((v, action, event) -> { submit(); return true; });
+              }
+              private void addBlob(FrameLayout parent, int color, int sizeDp, int gravity, int ml, int mt, int mr, int mb) {
+                  View v = new View(this);
+                  GradientDrawable g = new GradientDrawable();
+                  g.setShape(GradientDrawable.OVAL);
+                  g.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+                  g.setGradientRadius(dp(sizeDp / 2));
+                  g.setColors(new int[]{color, color & 0x00ffffff});
+                  v.setBackground(g);
+                  FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(sizeDp), dp(sizeDp), gravity);
+                  p.setMargins(dp(ml), dp(mt), dp(mr), dp(mb));
+                  parent.addView(v, p);
+              }
+              private GradientDrawable glass(int radiusDp, int top, int bottom, int stroke) {
+                  GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{top, bottom});
+                  g.setCornerRadius(dp(radiusDp));
+                  g.setStroke(dp(1), stroke);
+                  return g;
+              }
+              private Drawable glossy(int radiusDp, int c1, int c2, int heightDp) {
+                  GradientDrawable base = glass(radiusDp, c1, c2, 0x88FFFFFF);
+                  GradientDrawable gloss = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x77FFFFFF, 0x00FFFFFF});
+                  gloss.setCornerRadius(dp(radiusDp - 4));
+                  LayerDrawable ld = new LayerDrawable(new Drawable[]{base, gloss});
+                  ld.setLayerInset(1, dp(5), dp(3), dp(5), dp(heightDp / 2));
+                  return ld;
+              }
+              private void pressable(View v) {
+                  v.setOnTouchListener((view, e) -> {
+                      int a = e.getAction();
+                      if (a == MotionEvent.ACTION_DOWN) view.animate().scaleX(0.95f).scaleY(0.95f).setDuration(90).start();
+                      else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) view.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+                      return false;
+                  });
+              }
+              private int dp(int n){ return (int)(n*getResources().getDisplayMetrics().density+0.5f); }
+              private void submit(){ String s=input.getText().toString().trim(); if(s.isEmpty())return; input.setText(""); line("You",s); handle(s); }
+              private void line(String who,String s){
+                  boolean me=who.equals("You");
+                  TextView t=new TextView(this); t.setText(s); t.setTextSize(16); t.setTextIsSelectable(true); t.setLineSpacing(dp(2),1f); t.setPadding(dp(14),dp(10),dp(14),dp(10));
+                  if(me){ t.setTextColor(0xffffffff); t.setBackground(glass(20,0xff9b87ff,0xff5b6cff,0x66FFFFFF)); }
+                  else { t.setTextColor(0xff22202a); t.setBackground(glass(20,0xF2FFFFFF,0xCCF4F1FF,0x55B4A9FF)); }
+                  t.setElevation(dp(me?5:3));
+                  LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2); p.gravity=me?Gravity.END:Gravity.START; p.setMargins(me?dp(48):dp(4),dp(5),me?dp(4):dp(48),dp(7));
+                  chatList.addView(t,p);
+                  t.setAlpha(0f); t.setTranslationY(dp(10)); t.animate().alpha(1f).translationY(0f).setDuration(240).start();
+                  scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+              }
+              private void say(String s){ line("Sparten AI",s); if(ttsReady) tts.speak(s,TextToSpeech.QUEUE_FLUSH,null,"Spartan-reply"); }
+              private void startVoice(){
+                  if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){ requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},MIC); return; }
+                  if(!SpeechRecognizer.isRecognitionAvailable(this)){ say("Speech recognition is not available on this phone. Please type your command."); return; }
+                  Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH); i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); i.putExtra(RecognizerIntent.EXTRA_LANGUAGE,selectedLanguage.toLanguageTag()); i.putExtra(RecognizerIntent.EXTRA_PROMPT,"Speak in your preferred language"); i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,3);
+                  try{startActivityForResult(i,VOICE);}catch(ActivityNotFoundException e){say("Voice recognition service is unavailable. You can type instead.");}
+              }
+              @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);if(r==MIC&&g.length>0&&g[0]==PackageManager.PERMISSION_GRANTED)startVoice();else if(r==MIC)say("Microphone permission is needed for voice input.");}
+              @Override protected void onActivityResult(int r,int c,Intent d){super.onActivityResult(r,c,d);if(r==VOICE&&c==RESULT_OK&&d!=null){ArrayList<String>a=d.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);if(a!=null&&!a.isEmpty()){line("You",a.get(0));handle(a.get(0));}}}
+              private void handle(String raw){
+                  String s=raw.trim(), l=s.toLowerCase(Locale.ROOT);
+                  String number=extractNumber(s,l);
+                  if(number!=null){launch(new Intent(Intent.ACTION_DIAL,Uri.parse("tel:"+number)),"Dialer opened. Please review and place the call yourself.");return;}
+                  String sms=afterAny(s,l,"message ","sms ","text ","paigham ","پیغام ");
+                  if(sms!=null){try{Intent i=new Intent(Intent.ACTION_SEND
